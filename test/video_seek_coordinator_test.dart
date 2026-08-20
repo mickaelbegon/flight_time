@@ -79,4 +79,85 @@ void main() {
     expect(finalCompleted, isTrue);
     expect(targets, isNot(contains(const Duration(milliseconds: 20))));
   });
+
+  test('final seek does not flush an already completed exact target', () async {
+    final targets = <Duration>[];
+    final coordinator = VideoSeekCoordinator(
+      minimumInterval: Duration.zero,
+      seek: (target) async => targets.add(target),
+    );
+    addTearDown(coordinator.dispose);
+
+    const target = Duration(microseconds: 4167);
+    coordinator.request(target);
+    await flushMicrotasks();
+    await coordinator.requestFinal(target);
+
+    expect(targets, [target]);
+  });
+
+  test('external playback invalidates the completed-target optimization',
+      () async {
+    final targets = <Duration>[];
+    final coordinator = VideoSeekCoordinator(
+      minimumInterval: Duration.zero,
+      seek: (target) async => targets.add(target),
+    );
+    addTearDown(coordinator.dispose);
+
+    const target = Duration(milliseconds: 500);
+    coordinator.request(target);
+    await flushMicrotasks();
+    coordinator.invalidateLastCompletedTarget();
+    await coordinator.requestFinal(target);
+
+    expect(targets, [target, target]);
+  });
+
+  test('a stalled seek times out and the latest request is dispatched',
+      () async {
+    final targets = <Duration>[];
+    final stalledSeek = Completer<void>();
+    final coordinator = VideoSeekCoordinator(
+      minimumInterval: Duration.zero,
+      operationTimeout: const Duration(milliseconds: 10),
+      seek: (target) {
+        targets.add(target);
+        if (targets.length == 1) return stalledSeek.future;
+        return Future<void>.value();
+      },
+    );
+    addTearDown(coordinator.dispose);
+
+    coordinator.request(const Duration(milliseconds: 10));
+    coordinator.request(const Duration(milliseconds: 30));
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+
+    expect(targets, [
+      const Duration(milliseconds: 10),
+      const Duration(milliseconds: 30),
+    ]);
+    expect(coordinator.isBusy, isFalse);
+  });
+
+  test('debounced preview only dispatches the latest requested target',
+      () async {
+    final targets = <Duration>[];
+    final coordinator = VideoSeekCoordinator(
+      minimumInterval: Duration.zero,
+      debounceInterval: const Duration(milliseconds: 10),
+      seek: (target) async => targets.add(target),
+    );
+    addTearDown(coordinator.dispose);
+
+    coordinator.request(const Duration(milliseconds: 10), debounce: true);
+    coordinator.request(const Duration(milliseconds: 20), debounce: true);
+    coordinator.request(const Duration(milliseconds: 30), debounce: true);
+    expect(targets, isEmpty);
+
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+
+    expect(targets, [const Duration(milliseconds: 30)]);
+    expect(coordinator.isBusy, isFalse);
+  });
 }

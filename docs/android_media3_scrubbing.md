@@ -18,6 +18,30 @@ with `Duration.inMilliseconds` before calling `ExoPlayer.seekTo(long)`.
 Consequently, the Dart application cannot enable Media3 scrubbing mode or
 select `SeekParameters.EXACT` for the plugin-owned player instance.
 
+## Validated limitation: avoid `seekTo()` bursts
+
+On a Pixel 8a using the hardware `c2.exynos.h264.decoder`, a burst of
+frame-accurate `seekTo()` calls repeatedly flushes the MediaCodec pipeline.
+The resulting Android logs include stale input-buffer callbacks and discarded
+frames; the buffer pool itself is recycled normally, but the decoder has too
+little uninterrupted time to render a new frame. The future returned by
+`video_player.seekTo()` only confirms that the platform command was accepted;
+it does not mean that the requested image has been decoded and displayed.
+
+The application must therefore never use `seekTo()` as a rendering loop:
+
+- retain only the most recent requested position while a seek is active;
+- debounce preview seeks during continuous scrubbing, then issue one exact
+  seek when the gesture ends;
+- avoid synthetic delays between individual seeks, but rate-limit dispatches
+  to the decoder and recover if a platform seek does not complete;
+- recreate the plugin-owned controller if the native decoder remains unusable
+  after the natural completion transition.
+
+This is a `video_player`/MediaCodec limitation on the current Android path,
+not a buffer-pool memory exhaustion. Native Media3 scrubbing mode remains the
+preferred future solution when it is exposed by the Flutter plugin.
+
 ## Smallest robust phase 2
 
 The narrowest native change is an upstream contribution or a maintained plugin

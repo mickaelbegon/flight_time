@@ -67,12 +67,14 @@ class ScaffoldVideoPlayback extends StatefulWidget {
     super.key,
     required this.controller,
     required this.filePath,
+    required this.onWaitForControllerReady,
     this.videoMetaData,
   });
 
   final VideoPlayerController controller;
   final String filePath;
   final VideoMetaData? videoMetaData;
+  final Future<void> Function() onWaitForControllerReady;
 
   @override
   State<ScaffoldVideoPlayback> createState() => _ScaffoldVideoPlaybackState();
@@ -96,10 +98,13 @@ class _ScaffoldVideoPlaybackState extends State<ScaffoldVideoPlayback> {
   );
 
   final _videoPlaybackWatcherCompleter = Completer<void>();
+  bool _completionObserved = false;
+  bool _playbackReachedEnd = false;
 
   @override
   void initState() {
     super.initState();
+    widget.controller.addListener(_handlePlaybackCompletion);
     widget.controller.seekTo(_videoPlaybackWatcher.start);
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       final preferences = await SharedPreferences.getInstance();
@@ -113,6 +118,39 @@ class _ScaffoldVideoPlaybackState extends State<ScaffoldVideoPlayback> {
       setState(() {});
     });
     _showWarningMessage();
+  }
+
+  @override
+  void dispose() {
+    widget.controller.removeListener(_handlePlaybackCompletion);
+    super.dispose();
+  }
+
+  @override
+  void didUpdateWidget(ScaffoldVideoPlayback oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (identical(oldWidget.controller, widget.controller)) return;
+
+    oldWidget.controller.removeListener(_handlePlaybackCompletion);
+    widget.controller.addListener(_handlePlaybackCompletion);
+    _completionObserved = widget.controller.value.isCompleted;
+  }
+
+  void _handlePlaybackCompletion() {
+    final completed = widget.controller.value.isCompleted;
+    if (!completed) {
+      _completionObserved = false;
+      return;
+    }
+    if (_completionObserved) return;
+
+    _completionObserved = true;
+    _playbackReachedEnd = true;
+  }
+
+  Future<void> _prepareManualSeek() async {
+    await widget.onWaitForControllerReady();
+    _playbackReachedEnd = false;
   }
 
   Future<void> _showWarningMessage() async {
@@ -176,13 +214,31 @@ class _ScaffoldVideoPlaybackState extends State<ScaffoldVideoPlayback> {
     setState(() {});
   }
 
-  void _onPlay() {
-    widget.controller.play();
-    setState(() {});
+  Future<void> _onPlay() async {
+    await widget.onWaitForControllerReady();
+    if (!mounted) return;
+
+    final value = widget.controller.value;
+    final reachedEnd =
+        value.duration > Duration.zero && value.position >= value.duration;
+    if (_playbackReachedEnd || value.isCompleted || reachedEnd) {
+      // video_player also pauses and seeks when it emits its completion event.
+      // Serialize our replay command after that transition so its internal seek
+      // cannot move the video back to the end after playback has restarted.
+      await widget.controller.pause();
+      if (!mounted) return;
+      await widget.controller.seekTo(_videoPlaybackWatcher.start);
+      if (!mounted) return;
+      _playbackReachedEnd = false;
+    }
+
+    await widget.controller.play();
+    if (mounted) setState(() {});
   }
 
-  void _onPause() {
-    widget.controller.pause();
+  Future<void> _onPause() async {
+    await widget.controller.pause();
+    if (mounted) setState(() {});
   }
 
   Future<void> _areYouSureDialog(BuildContext context) async {
@@ -293,6 +349,7 @@ class _ScaffoldVideoPlaybackState extends State<ScaffoldVideoPlayback> {
             onUpdateRanges: _onUpdateJumpTime,
             onPlay: _onPlay,
             onPause: _onPause,
+            onPrepareManualSeek: _prepareManualSeek,
           ),
         ),
         body: Stack(
@@ -515,13 +572,15 @@ class _VideoPlaybackSlider extends StatefulWidget {
     required this.onUpdateRanges,
     required this.onPlay,
     required this.onPause,
+    required this.onPrepareManualSeek,
   });
 
   final _VideoPlaybackWatcher watcher;
   final VideoPlayerController videoController;
   final VoidCallback onUpdateRanges;
-  final VoidCallback onPlay;
-  final VoidCallback onPause;
+  final Future<void> Function() onPlay;
+  final Future<void> Function() onPause;
+  final Future<void> Function() onPrepareManualSeek;
 
   @override
   State<_VideoPlaybackSlider> createState() => _VideoPlaybackSliderState();
@@ -545,6 +604,10 @@ class _VideoPlaybackSliderState extends State<_VideoPlaybackSlider> {
   bool _isScrubbing = false;
   bool _wasPlayingBeforeScrub = false;
   int _scrubSequence = 0;
+  Future<void>? _pauseBeforeSeek;
+  late bool _lastControllerIsPlaying = widget.videoController.value.isPlaying;
+  late bool _lastControllerIsCompleted =
+      widget.videoController.value.isCompleted;
 
   int get _totalFrames => totalFramesForDuration(
         duration: widget.videoController.value.duration,
@@ -573,18 +636,38 @@ class _VideoPlaybackSliderState extends State<_VideoPlaybackSlider> {
   void initState() {
     super.initState();
     _seekCoordinator = VideoSeekCoordinator(
-      seek: widget.videoController.seekTo,
-      minimumInterval: const Duration(
-        microseconds: Duration.microsecondsPerSecond ~/ 60,
-      ),
+      seek: _seekVideo,
+      // video_player reports seek command completion before MediaCodec has
+      // rendered the requested frame. Samsung/Exynos decoders can otherwise
+      // spend all their time flushing stale work during a fast drag.
+      minimumInterval: Platform.isAndroid
+          ? const Duration(milliseconds: 150)
+          : const Duration(
+              microseconds: Duration.microsecondsPerSecond ~/ 60,
+            ),
+      // Continuous exact seeks repeatedly flush MediaCodec on Android. Wait
+      // for a short pause in the gesture, then preview only its latest frame.
+      debounceInterval: Platform.isAndroid
+          ? const Duration(milliseconds: 250)
+          : Duration.zero,
+      // A platform seek can occasionally never complete after repeated codec
+      // flushes. It must not permanently block the last-request-wins queue.
+      operationTimeout: Platform.isAndroid ? const Duration(seconds: 1) : null,
       onError: _reportSeekError,
     );
-    widget.videoController.addListener(_updatePlaybackMarkerFromPlaying);
+    widget.videoController.addListener(_updateFromVideoController);
   }
 
   @override
   void didUpdateWidget(_VideoPlaybackSlider oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.videoController, widget.videoController)) {
+      oldWidget.videoController.removeListener(_updateFromVideoController);
+      widget.videoController.addListener(_updateFromVideoController);
+      _seekCoordinator.invalidateLastCompletedTarget();
+      _lastControllerIsPlaying = widget.videoController.value.isPlaying;
+      _lastControllerIsCompleted = widget.videoController.value.isCompleted;
+    }
     final updatedFps = widget.watcher.fps.value;
     if (updatedFps != _fps) {
       final currentPosition = _positionForFrame(_targetFrame);
@@ -596,7 +679,7 @@ class _VideoPlaybackSliderState extends State<_VideoPlaybackSlider> {
   @override
   void dispose() {
     _seekCoordinator.dispose();
-    widget.videoController.removeListener(_updatePlaybackMarkerFromPlaying);
+    widget.videoController.removeListener(_updateFromVideoController);
     super.dispose();
   }
 
@@ -615,18 +698,43 @@ class _VideoPlaybackSliderState extends State<_VideoPlaybackSlider> {
     return position > duration ? duration : position;
   }
 
-  void _updatePlaybackMarkerFromPlaying() {
-    if (mounted &&
-        widget.videoController.value.isPlaying &&
-        !_isScrubbing &&
-        !_seekCoordinator.isBusy) {
-      final playingFrame = _frameForPosition(
-        widget.videoController.value.position,
-      );
-      if (playingFrame == _targetFrame) return;
-      _targetFrame = playingFrame;
-      setState(() {});
+  Future<void> _seekVideo(Duration target) async {
+    await widget.onPrepareManualSeek();
+    final pause = _pauseBeforeSeek;
+    if (pause != null) {
+      try {
+        await pause;
+      } finally {
+        if (identical(_pauseBeforeSeek, pause)) _pauseBeforeSeek = null;
+      }
     }
+    await widget.videoController.seekTo(target);
+  }
+
+  void _updateFromVideoController() {
+    if (!mounted) return;
+
+    final value = widget.videoController.value;
+    var needsRebuild = value.isPlaying != _lastControllerIsPlaying ||
+        value.isCompleted != _lastControllerIsCompleted;
+    _lastControllerIsPlaying = value.isPlaying;
+    _lastControllerIsCompleted = value.isCompleted;
+
+    if (value.isPlaying || value.isCompleted) {
+      _seekCoordinator.invalidateLastCompletedTarget();
+    }
+
+    if (value.isPlaying && !_isScrubbing && !_seekCoordinator.isBusy) {
+      final playingFrame = _frameForPosition(
+        value.position,
+      );
+      if (playingFrame != _targetFrame) {
+        _targetFrame = playingFrame;
+        needsRebuild = true;
+      }
+    }
+
+    if (needsRebuild) setState(() {});
   }
 
   void _setTargetFrame(int requestedFrame, {bool requestSeek = true}) {
@@ -635,7 +743,10 @@ class _VideoPlaybackSliderState extends State<_VideoPlaybackSlider> {
     _targetFrame = nextFrame;
     if (changed && mounted) setState(() {});
     if (requestSeek && changed) {
-      _seekCoordinator.request(_targetPosition);
+      _seekCoordinator.request(
+        _targetPosition,
+        debounce: Platform.isAndroid && _isScrubbing,
+      );
     }
   }
 
@@ -645,7 +756,7 @@ class _VideoPlaybackSliderState extends State<_VideoPlaybackSlider> {
 
     _isScrubbing = true;
     _wasPlayingBeforeScrub = widget.videoController.value.isPlaying;
-    if (_wasPlayingBeforeScrub) widget.onPause();
+    _pauseBeforeSeek = _wasPlayingBeforeScrub ? widget.onPause() : null;
     if (mounted) setState(() {});
   }
 
@@ -661,7 +772,7 @@ class _VideoPlaybackSliderState extends State<_VideoPlaybackSlider> {
 
     _isScrubbing = false;
     if (_wasPlayingBeforeScrub && _targetFrame < _totalFrames) {
-      widget.onPlay();
+      unawaited(widget.onPlay());
     }
     setState(() {});
   }
@@ -698,7 +809,14 @@ class _VideoPlaybackSliderState extends State<_VideoPlaybackSlider> {
     widget.onUpdateRanges();
     if (mounted) setState(() {});
 
-    _setTargetFrame(_focusOnFirst ? startFrame : endFrame);
+    _setTargetFrame(
+      _focusOnFirst ? startFrame : endFrame,
+      requestSeek: false,
+    );
+    _seekCoordinator.request(
+      _targetPosition,
+      debounce: Platform.isAndroid,
+    );
   }
 
   Future<void> _onRangeChangeEnd(RangeValues values) async {
@@ -774,14 +892,8 @@ class _VideoPlaybackSliderState extends State<_VideoPlaybackSlider> {
                         SizedBox(width: padding),
                         _PlayButton(
                           isPlaying: widget.videoController.value.isPlaying,
-                          onPause: () {
-                            widget.onPause();
-                            setState(() {});
-                          },
-                          onPlay: () {
-                            widget.onPlay();
-                            setState(() {});
-                          },
+                          onPause: () => unawaited(widget.onPause()),
+                          onPlay: () => unawaited(widget.onPlay()),
                         ),
                         SizedBox(width: padding),
                         _MarkerButton(
@@ -815,6 +927,7 @@ class _VideoPlaybackSliderState extends State<_VideoPlaybackSlider> {
                 fps: _fps,
                 duration: widget.videoController.value.duration,
                 frameIndex: _targetFrame,
+                reverseDirection: true,
                 onFrameChanged: _setTargetFrame,
                 onScrubStart: _onScrubStart,
                 onScrubEnd: _onScrubEnd,
@@ -838,8 +951,8 @@ class _PlayButton extends StatelessWidget {
   });
 
   final bool isPlaying;
-  final Function() onPause;
-  final Function() onPlay;
+  final VoidCallback onPause;
+  final VoidCallback onPlay;
 
   @override
   Widget build(BuildContext context) {

@@ -10,21 +10,29 @@ class VideoSeekCoordinator {
   VideoSeekCoordinator({
     required VideoSeekCallback seek,
     required this.minimumInterval,
+    this.debounceInterval = Duration.zero,
+    this.operationTimeout,
     VideoSeekErrorCallback? onError,
   })  : _seek = seek,
         _onError = onError,
-        _clock = Stopwatch()..start();
+        _clock = Stopwatch()..start(),
+        assert(debounceInterval >= Duration.zero),
+        assert(operationTimeout == null || operationTimeout > Duration.zero);
 
   final VideoSeekCallback _seek;
   final VideoSeekErrorCallback? _onError;
   final Duration minimumInterval;
+  final Duration debounceInterval;
+  final Duration? operationTimeout;
   final Stopwatch _clock;
 
   Duration? _pendingTarget;
   Duration? _lastDispatchTime;
+  Duration? _lastCompletedTarget;
   Future<void>? _activeSeek;
   Future<void>? _finalSeek;
   Timer? _throttleTimer;
+  Timer? _debounceTimer;
   bool _disposed = false;
   bool _finalizing = false;
 
@@ -37,16 +45,33 @@ class VideoSeekCoordinator {
       _activeSeek != null ||
       _finalizing ||
       _pendingTarget != null ||
-      _throttleTimer != null;
+      _throttleTimer != null ||
+      _debounceTimer != null;
 
   Duration? get pendingTarget => _pendingTarget;
 
-  void request(Duration target) {
+  void invalidateLastCompletedTarget() {
+    _lastCompletedTarget = null;
+  }
+
+  void request(Duration target, {bool debounce = false}) {
     if (_disposed) return;
 
     requestedSeekCount++;
     _pendingTarget = target;
     maxPendingSeekCount = 1;
+
+    if (debounce && debounceInterval > Duration.zero) {
+      _debounceTimer?.cancel();
+      _debounceTimer = Timer(debounceInterval, () {
+        _debounceTimer = null;
+        _schedulePendingSeek();
+      });
+      return;
+    }
+
+    _debounceTimer?.cancel();
+    _debounceTimer = null;
     _schedulePendingSeek();
   }
 
@@ -78,6 +103,8 @@ class VideoSeekCoordinator {
     _pendingTarget = null;
     _throttleTimer?.cancel();
     _throttleTimer = null;
+    _debounceTimer?.cancel();
+    _debounceTimer = null;
 
     try {
       final activeSeek = _activeSeek;
@@ -90,13 +117,36 @@ class VideoSeekCoordinator {
       }
       if (_disposed) return;
 
+      if (_lastCompletedTarget == target) return;
+
+      await _waitForDispatchWindow();
+      if (_disposed) return;
+
       _lastDispatchTime = _clock.elapsed;
       dispatchedSeekCount++;
-      await _seek(target);
+      await _seekWithTimeout(target);
+      _lastCompletedTarget = target;
       completedSeekCount++;
     } finally {
       _finalizing = false;
       _schedulePendingSeek();
+    }
+  }
+
+  Future<void> _seekWithTimeout(Duration target) {
+    final operation = _seek(target);
+    final timeout = operationTimeout;
+    return timeout == null ? operation : operation.timeout(timeout);
+  }
+
+  Future<void> _waitForDispatchWindow() async {
+    final lastDispatchTime = _lastDispatchTime;
+    if (lastDispatchTime == null || minimumInterval <= Duration.zero) return;
+
+    final elapsedSinceDispatch = _clock.elapsed - lastDispatchTime;
+    final remainingDelay = minimumInterval - elapsedSinceDispatch;
+    if (remainingDelay > Duration.zero) {
+      await Future<void>.delayed(remainingDelay);
     }
   }
 
@@ -105,7 +155,8 @@ class VideoSeekCoordinator {
         _finalizing ||
         _pendingTarget == null ||
         _activeSeek != null ||
-        _throttleTimer != null) {
+        _throttleTimer != null ||
+        _debounceTimer != null) {
       return;
     }
 
@@ -139,7 +190,7 @@ class VideoSeekCoordinator {
 
     late final Future<void> operation;
     try {
-      operation = _seek(target);
+      operation = _seekWithTimeout(target);
     } on Object catch (error, stackTrace) {
       _onError?.call(error, stackTrace);
       completedSeekCount++;
@@ -149,18 +200,23 @@ class VideoSeekCoordinator {
 
     _activeSeek = operation;
     operation.then<void>(
-      (_) => _completeSeek(operation),
+      (_) => _completeSeek(operation, target: target, succeeded: true),
       onError: (Object error, StackTrace stackTrace) {
         _onError?.call(error, stackTrace);
-        _completeSeek(operation);
+        _completeSeek(operation, target: target, succeeded: false);
       },
     );
   }
 
-  void _completeSeek(Future<void> operation) {
+  void _completeSeek(
+    Future<void> operation, {
+    required Duration target,
+    required bool succeeded,
+  }) {
     if (!identical(_activeSeek, operation)) return;
 
     _activeSeek = null;
+    if (succeeded) _lastCompletedTarget = target;
     completedSeekCount++;
     _schedulePendingSeek();
   }
@@ -170,6 +226,8 @@ class VideoSeekCoordinator {
     _pendingTarget = null;
     _throttleTimer?.cancel();
     _throttleTimer = null;
+    _debounceTimer?.cancel();
+    _debounceTimer = null;
     _clock.stop();
   }
 }
