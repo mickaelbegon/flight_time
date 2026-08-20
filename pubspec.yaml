@@ -11,14 +11,14 @@ dependencies:
   flutter:
     sdk: flutter
   camerawesome: ^2.1.0
-  video_player: ^2.9.2
-  cupertino_icons: ^1.0.8
-  sembast: ^3.7.5
+  video_player: ^2.14.0
+  cupertino_icons: ^1.0.9
+  sembast: ^3.8.9+1
   path: ^1.9.0
-  path_provider: ^2.1.4
+  path_provider: ^2.1.6
   intl: ^0.19.0
-  shared_preferences: ^2.3.3
-  google_fonts: ^6.2.1
+  shared_preferences: ^2.5.5
+  google_fonts: ^6.3.3
 
 dev_dependencies:
   flutter_test:
@@ -26,7 +26,7 @@ dev_dependencies:
   flutter_lints: ^5.0.0
   path_provider_linux: ^2.2.1
   flutter_launcher_icons: ^0.14.1
-  flutter_native_splash: ^2.4.2
+  flutter_native_splash: ^2.4.8
 
 flutter:
   uses-material-design: true
