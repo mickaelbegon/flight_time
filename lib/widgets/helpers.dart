@@ -10,7 +10,7 @@ const white = Color.fromRGBO(0xFF, 0xFF, 0xFF, 1);
 const black = Color.fromRGBO(0x00, 0x00, 0x00, 1);
 
 Size computeSize(
-  context, {
+  BuildContext context, {
   required Size videoSize,
   required double videoAspectRatio,
 }) {
@@ -23,9 +23,8 @@ Size computeSize(
   final widthSizeFactor = width / screenWidth;
   final heightSizeFactor = height / screenHeight;
 
-  final sizeFactor = widthSizeFactor > heightSizeFactor
-      ? widthSizeFactor
-      : heightSizeFactor;
+  final sizeFactor =
+      widthSizeFactor > heightSizeFactor ? widthSizeFactor : heightSizeFactor;
 
   return Size(
     videoSize.width / sizeFactor,
@@ -36,7 +35,8 @@ Size computeSize(
 Duration fligthTime({
   required Duration timeJumpStarts,
   required Duration timeJumpEnds,
-}) => timeJumpEnds - timeJumpStarts;
+}) =>
+    timeJumpEnds - timeJumpStarts;
 
 double flightHeight({required Duration fligthTime}) {
   final flightTimeSeconds =
