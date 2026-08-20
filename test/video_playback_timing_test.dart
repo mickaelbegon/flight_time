@@ -25,6 +25,51 @@ void main() {
     });
   });
 
+  group('frame and duration conversions', () {
+    const expectedFrameOneUs = [
+      (fps: 30.0, durationUs: 33333),
+      (fps: 60.0, durationUs: 16667),
+      (fps: 120.0, durationUs: 8333),
+      (fps: 240.0, durationUs: 4167),
+    ];
+
+    for (final entry in expectedFrameOneUs) {
+      test('${entry.fps.toInt()} fps', () {
+        expect(
+          frameToDuration(1, entry.fps),
+          Duration(microseconds: entry.durationUs),
+        );
+        expect(durationToFrame(frameToDuration(1, entry.fps), entry.fps), 1);
+      });
+    }
+
+    test('converts frame two at 240 fps without accumulating rounding', () {
+      expect(frameToDuration(2, 240), const Duration(microseconds: 8333));
+    });
+
+    test('computes and clamps the last frame', () {
+      expect(
+        totalFramesForDuration(duration: const Duration(seconds: 2), fps: 240),
+        480,
+      );
+      expect(clampFrameIndex(-1, 480), 0);
+      expect(clampFrameIndex(481, 480), 480);
+    });
+
+    test('handles invalid fps and zero duration', () {
+      expect(
+        totalFramesForDuration(duration: Duration.zero, fps: 240),
+        0,
+      );
+      expect(
+        totalFramesForDuration(duration: const Duration(seconds: 1), fps: 0),
+        0,
+      );
+      expect(durationToFrame(const Duration(seconds: 1), 0), 0);
+      expect(() => frameToDuration(1, 0), throwsArgumentError);
+    });
+  });
+
   group('normalized position conversions', () {
     const duration = Duration(seconds: 2);
 
