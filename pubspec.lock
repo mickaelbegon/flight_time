@@ -44,10 +44,11 @@ packages:
   camerawesome:
     dependency: "direct main"
     description:
-      name: camerawesome
-      sha256: "8e7f61ac78d4e58f1b198d6baa74b8af931819843e5247262c79539fb2f9949c"
-      url: "https://pub.dev"
-    source: hosted
+      path: "."
+      ref: "28f938f1e7e24226ef2e3d27e2e35840351d81af"
+      resolved-ref: "28f938f1e7e24226ef2e3d27e2e35840351d81af"
+      url: "https://github.com/mickaelbegon/CamerAwesome.git"
+    source: git
     version: "2.5.0"
   carousel_slider:
     dependency: transitive

@@ -28,6 +28,12 @@ dev_dependencies:
   flutter_launcher_icons: ^0.14.1
   flutter_native_splash: ^2.4.8
 
+dependency_overrides:
+  camerawesome:
+    git:
+      url: https://github.com/mickaelbegon/CamerAwesome.git
+      ref: 28f938f1e7e24226ef2e3d27e2e35840351d81af
+
 flutter:
   uses-material-design: true
   assets:
