@@ -4,8 +4,6 @@ PODS:
   - Flutter (1.0.0)
   - flutter_native_splash (2.4.3):
     - Flutter
-  - flutter_video_info (1.1.0):
-    - Flutter
   - shared_preferences_foundation (0.0.1):
     - Flutter
     - FlutterMacOS
@@ -17,7 +15,6 @@ DEPENDENCIES:
   - camerawesome (from `.symlinks/plugins/camerawesome/ios`)
   - Flutter (from `Flutter`)
   - flutter_native_splash (from `.symlinks/plugins/flutter_native_splash/ios`)
-  - flutter_video_info (from `.symlinks/plugins/flutter_video_info/ios`)
   - shared_preferences_foundation (from `.symlinks/plugins/shared_preferences_foundation/darwin`)
   - video_player_avfoundation (from `.symlinks/plugins/video_player_avfoundation/darwin`)
 
@@ -28,8 +25,6 @@ EXTERNAL SOURCES:
     :path: Flutter
   flutter_native_splash:
     :path: ".symlinks/plugins/flutter_native_splash/ios"
-  flutter_video_info:
-    :path: ".symlinks/plugins/flutter_video_info/ios"
   shared_preferences_foundation:
     :path: ".symlinks/plugins/shared_preferences_foundation/darwin"
   video_player_avfoundation:
@@ -39,7 +34,6 @@ SPEC CHECKSUMS:
   camerawesome: 7ad7493b41b648d2fab64b1fd5ae08299b913120
   Flutter: cabc95a1d2626b1b06e7179b784ebcf0c0cde467
   flutter_native_splash: df59bb2e1421aa0282cb2e95618af4dcb0c56c29
-  flutter_video_info: a932e1b0da369bba95c3a14b7f61d5f8b0d03280
   shared_preferences_foundation: 5086985c1d43c5ba4d5e69a4e8083a389e2909e6
   video_player_avfoundation: 7993f492ae0bd77edaea24d9dc051d8bb2cd7c86
 

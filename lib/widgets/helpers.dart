@@ -9,8 +9,11 @@ const orange = Color.fromRGBO(0xf8, 0xc8, 0x23, 1);
 const white = Color.fromRGBO(0xFF, 0xFF, 0xFF, 1);
 const black = Color.fromRGBO(0x00, 0x00, 0x00, 1);
 
-Size computeSize(context,
-    {required Size videoSize, required double videoAspectRatio}) {
+Size computeSize(
+  BuildContext context, {
+  required Size videoSize,
+  required double videoAspectRatio,
+}) {
   final width = videoSize.width;
   final height = videoSize.height;
 
@@ -23,19 +26,23 @@ Size computeSize(context,
   final sizeFactor =
       widthSizeFactor > heightSizeFactor ? widthSizeFactor : heightSizeFactor;
 
-  return Size(videoSize.width / sizeFactor,
-      videoSize.height * videoAspectRatio / sizeFactor);
+  return Size(
+    videoSize.width / sizeFactor,
+    videoSize.height * videoAspectRatio / sizeFactor,
+  );
 }
 
-Duration fligthTime(
-        {required Duration timeJumpStarts, required Duration timeJumpEnds}) =>
+Duration fligthTime({
+  required Duration timeJumpStarts,
+  required Duration timeJumpEnds,
+}) =>
     timeJumpEnds - timeJumpStarts;
 
-double flightHeight({required Duration fligthTime}) =>
-    9.81 *
-    (fligthTime.inMilliseconds / 1000) *
-    (fligthTime.inMilliseconds / 1000) /
-    8.0;
+double flightHeight({required Duration fligthTime}) {
+  final flightTimeSeconds =
+      fligthTime.inMicroseconds / Duration.microsecondsPerSecond;
+  return 9.81 * flightTimeSeconds * flightTimeSeconds / 8.0;
+}
 
 TextStyle get appTitleStyle => GoogleFonts.mateSc();
 TextStyle get subtitleStyle => GoogleFonts.mateSc();

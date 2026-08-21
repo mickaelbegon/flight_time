@@ -13,7 +13,7 @@ class CameraPage extends StatelessWidget {
 
   static const routeName = '/camera-page';
 
-  _recordVideo(context, MediaCapture mediaRecording) async {
+  void _recordVideo(BuildContext context, MediaCapture mediaRecording) {
     final finishedRecording = !mediaRecording.isRecordingVideo;
     if (!finishedRecording) return;
 

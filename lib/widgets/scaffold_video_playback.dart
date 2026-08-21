@@ -8,8 +8,10 @@ import 'package:flight_time/models/video_meta_data.dart';
 import 'package:flight_time/widgets/helpers.dart';
 import 'package:flight_time/widgets/save_trial_dialog.dart';
 import 'package:flight_time/widgets/translatable_text.dart';
+import 'package:flight_time/widgets/video_playback_timing.dart';
+import 'package:flight_time/widgets/video_seek_coordinator.dart';
+import 'package:flight_time/widgets/velocity_jog_scrubber.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter_video_info/flutter_video_info.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:video_player/video_player.dart';
 
@@ -17,8 +19,7 @@ enum FpsOptions {
   fps30,
   fps60,
   fps120,
-  fps240,
-  ;
+  fps240;
 
   double get value {
     switch (this) {
@@ -54,8 +55,11 @@ class _VideoPlaybackWatcher {
 
   FpsOptions fps;
 
-  _VideoPlaybackWatcher(
-      {required this.start, required this.end, required this.fps});
+  _VideoPlaybackWatcher({
+    required this.start,
+    required this.end,
+    required this.fps,
+  });
 }
 
 class ScaffoldVideoPlayback extends StatefulWidget {
@@ -63,14 +67,14 @@ class ScaffoldVideoPlayback extends StatefulWidget {
     super.key,
     required this.controller,
     required this.filePath,
+    required this.onWaitForControllerReady,
     this.videoMetaData,
-    required this.videoData,
   });
 
   final VideoPlayerController controller;
   final String filePath;
   final VideoMetaData? videoMetaData;
-  final VideoData videoData;
+  final Future<void> Function() onWaitForControllerReady;
 
   @override
   State<ScaffoldVideoPlayback> createState() => _ScaffoldVideoPlaybackState();
@@ -88,26 +92,65 @@ class _ScaffoldVideoPlaybackState extends State<ScaffoldVideoPlayback> {
   late String? _trialName = _metaData?.trialName;
 
   late final _videoPlaybackWatcher = _VideoPlaybackWatcher(
-      start: _metaData?.timeJumpStarts ?? Duration.zero,
-      end: _metaData?.timeJumpEnds ?? widget.controller.value.duration,
-      fps: FpsOptions.fps30);
+    start: _metaData?.timeJumpStarts ?? Duration.zero,
+    end: _metaData?.timeJumpEnds ?? widget.controller.value.duration,
+    fps: FpsOptions.fps30,
+  );
 
   final _videoPlaybackWatcherCompleter = Completer<void>();
+  bool _completionObserved = false;
+  bool _playbackReachedEnd = false;
 
   @override
   void initState() {
+    super.initState();
+    widget.controller.addListener(_handlePlaybackCompletion);
     widget.controller.seekTo(_videoPlaybackWatcher.start);
     WidgetsBinding.instance.addPostFrameCallback((_) async {
       final preferences = await SharedPreferences.getInstance();
       final fps = preferences.getDouble('fps') ?? FpsOptions.fps30.value;
+      if (!mounted) return;
       _videoPlaybackWatcher.fps = FpsOptions.values.firstWhere(
-          (element) => element.value == fps,
-          orElse: () => FpsOptions.fps30);
+        (element) => element.value == fps,
+        orElse: () => FpsOptions.fps30,
+      );
       _videoPlaybackWatcherCompleter.complete();
       setState(() {});
     });
     _showWarningMessage();
-    super.initState();
+  }
+
+  @override
+  void dispose() {
+    widget.controller.removeListener(_handlePlaybackCompletion);
+    super.dispose();
+  }
+
+  @override
+  void didUpdateWidget(ScaffoldVideoPlayback oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (identical(oldWidget.controller, widget.controller)) return;
+
+    oldWidget.controller.removeListener(_handlePlaybackCompletion);
+    widget.controller.addListener(_handlePlaybackCompletion);
+    _completionObserved = widget.controller.value.isCompleted;
+  }
+
+  void _handlePlaybackCompletion() {
+    final completed = widget.controller.value.isCompleted;
+    if (!completed) {
+      _completionObserved = false;
+      return;
+    }
+    if (_completionObserved) return;
+
+    _completionObserved = true;
+    _playbackReachedEnd = true;
+  }
+
+  Future<void> _prepareManualSeek() async {
+    await widget.onWaitForControllerReady();
+    _playbackReachedEnd = false;
   }
 
   Future<void> _showWarningMessage() async {
@@ -117,6 +160,7 @@ class _ScaffoldVideoPlaybackState extends State<ScaffoldVideoPlayback> {
 
     if (!mounted) return;
     WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
       await showDialog(
         context: context,
         builder: (context) => PopScope(
@@ -143,6 +187,7 @@ class _ScaffoldVideoPlaybackState extends State<ScaffoldVideoPlayback> {
   Future<void> _onChangedFps(FpsOptions fps) async {
     final preferences = await SharedPreferences.getInstance();
     await preferences.setDouble('fps', fps.value);
+    if (!mounted) return;
     _videoPlaybackWatcher.fps = fps;
     setState(() {});
   }
@@ -150,17 +195,18 @@ class _ScaffoldVideoPlaybackState extends State<ScaffoldVideoPlayback> {
   Future<void> _onSaveVideo() async {
     final response = _isVideoNew
         ? await showDialog<Map<String, String>?>(
-            context: context, builder: (context) => SaveTrialDialog())
+            context: context,
+            builder: (context) => SaveTrialDialog(),
+          )
         : {'athlete': _metaData!.athlete.name, 'trial': _metaData!.trialName};
-    if (response == null) return;
+    if (!mounted || response == null) return;
 
     _athleteName = response['athlete'];
     _trialName = response['trial'];
 
-    _manageFileSaving();
-
     _canSave = false;
     setState(() {});
+    await _manageFileSaving();
   }
 
   void _onUpdateJumpTime() async {
@@ -168,23 +214,42 @@ class _ScaffoldVideoPlaybackState extends State<ScaffoldVideoPlayback> {
     setState(() {});
   }
 
-  void _onPlay() {
-    widget.controller.play();
-    setState(() {});
+  Future<void> _onPlay() async {
+    await widget.onWaitForControllerReady();
+    if (!mounted) return;
+
+    final value = widget.controller.value;
+    final reachedEnd =
+        value.duration > Duration.zero && value.position >= value.duration;
+    if (_playbackReachedEnd || value.isCompleted || reachedEnd) {
+      // video_player also pauses and seeks when it emits its completion event.
+      // Serialize our replay command after that transition so its internal seek
+      // cannot move the video back to the end after playback has restarted.
+      await widget.controller.pause();
+      if (!mounted) return;
+      await widget.controller.seekTo(_videoPlaybackWatcher.start);
+      if (!mounted) return;
+      _playbackReachedEnd = false;
+    }
+
+    await widget.controller.play();
+    if (mounted) setState(() {});
   }
 
-  void _onPause() {
-    widget.controller.pause();
+  Future<void> _onPause() async {
+    await widget.controller.pause();
+    if (mounted) setState(() {});
   }
 
-  void _areYouSureDialog(context) async {
-    _canPop = _canSave
+  Future<void> _areYouSureDialog(BuildContext context) async {
+    final canPop = _canSave
         ? await showDialog(
             context: context,
             builder: (context) => AlertDialog(
               title: TranslatableText(TextManager.instance.areYouSureQuit),
               content: TranslatableText(
-                  TextManager.instance.youWillLoseYourProgress),
+                TextManager.instance.youWillLoseYourProgress,
+              ),
               actions: [
                 TextButton(
                   onPressed: () => Navigator.of(context).pop(false),
@@ -199,12 +264,14 @@ class _ScaffoldVideoPlaybackState extends State<ScaffoldVideoPlayback> {
           )
         : true;
 
+    if (!context.mounted) return;
+    _canPop = canPop;
     if (_canPop) {
       Navigator.of(context).pop();
     }
   }
 
-  void _manageFileSaving() async {
+  Future<void> _manageFileSaving() async {
     final now = DateTime.now();
 
     // We have to copy because _metaData won't be null anymore
@@ -212,20 +279,24 @@ class _ScaffoldVideoPlaybackState extends State<ScaffoldVideoPlayback> {
 
     _metaData = (isVideoNew
         ? VideoMetaData(
-            athlete:
-                await Athletes.instance.athleteFromNameOrAdd(_athleteName!),
+            athlete: await Athletes.instance.athleteFromNameOrAdd(
+              _athleteName!,
+            ),
             trialName: _trialName!,
-            baseFolder:
-                Directory('${await FileManager.dataFolder}/${_athleteName!}'),
+            baseFolder: Directory(
+              '${await FileManager.dataFolder}/${_athleteName!}',
+            ),
             duration: widget.controller.value.duration,
             creationDate: now,
             lastModified: now,
             timeJumpStarts: _videoPlaybackWatcher.start,
-            timeJumpEnds: _videoPlaybackWatcher.end)
+            timeJumpEnds: _videoPlaybackWatcher.end,
+          )
         : _metaData!.copyWith(
             lastModified: now,
             timeJumpStarts: _videoPlaybackWatcher.start,
-            timeJumpEnds: _videoPlaybackWatcher.end));
+            timeJumpEnds: _videoPlaybackWatcher.end,
+          ));
 
     // Add the video to the database
     await Athletes.instance.addVideo(_metaData!);
@@ -251,65 +322,73 @@ class _ScaffoldVideoPlaybackState extends State<ScaffoldVideoPlayback> {
       canPop: _canPop,
       onPopInvokedWithResult: (didPop, result) => _managePop(),
       child: Scaffold(
-          appBar: AppBar(
-            title: TranslatableText(TextManager.instance.visualizingVideo,
-                style: appTitleStyle),
-            elevation: 0,
-            leading: IconButton(
-                onPressed: () => _areYouSureDialog(context),
-                icon: Icon(Icons.arrow_back)),
-            actions: [
-              IconButton(
-                icon: const Icon(Icons.save),
-                onPressed: _canSave ? _onSaveVideo : null,
-              )
-            ],
+        appBar: AppBar(
+          title: TranslatableText(
+            TextManager.instance.visualizingVideo,
+            style: appTitleStyle,
           ),
-          bottomNavigationBar: Container(
-            color: Theme.of(context).appBarTheme.backgroundColor,
-            width: double.infinity,
-            height: 150,
-            child: _VideoPlaybackSlider(_videoPlaybackWatcher,
-                videoController: widget.controller,
-                onUpdateRanges: _onUpdateJumpTime,
-                onPlay: _onPlay,
-                onPause: _onPause),
+          elevation: 0,
+          leading: IconButton(
+            onPressed: () => _areYouSureDialog(context),
+            icon: Icon(Icons.arrow_back),
           ),
-          body: Stack(
-            children: [
-              Container(
-                width: double.infinity,
-                height: double.infinity,
-                color: darkBlue,
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.save),
+              onPressed: _canSave ? _onSaveVideo : null,
+            ),
+          ],
+        ),
+        bottomNavigationBar: Container(
+          color: Theme.of(context).appBarTheme.backgroundColor,
+          width: double.infinity,
+          height: 220,
+          child: _VideoPlaybackSlider(
+            _videoPlaybackWatcher,
+            videoController: widget.controller,
+            onUpdateRanges: _onUpdateJumpTime,
+            onPlay: _onPlay,
+            onPause: _onPause,
+            onPrepareManualSeek: _prepareManualSeek,
+          ),
+        ),
+        body: Stack(
+          children: [
+            Container(
+              width: double.infinity,
+              height: double.infinity,
+              color: darkBlue,
+            ),
+            Center(
+              child: AspectRatio(
+                aspectRatio: widget.controller.value.aspectRatio,
+                child: VideoPlayer(widget.controller),
               ),
-              Center(
-                child: AspectRatio(
-                  aspectRatio:
-                      widget.videoData.width! / widget.videoData.height!,
-                  child: VideoPlayer(widget.controller),
-                ),
+            ),
+            Positioned(
+              left: 24,
+              top: 24,
+              child: _FightTime(videoPlaybackWatcher: _videoPlaybackWatcher),
+            ),
+            Positioned(
+              right: 24,
+              top: 24,
+              child: FutureBuilder(
+                future: _videoPlaybackWatcherCompleter.future,
+                builder: (context, snapshot) {
+                  if (snapshot.connectionState != ConnectionState.done) {
+                    return Container();
+                  }
+                  return _FpsSelector(
+                    initialValue: _videoPlaybackWatcher.fps,
+                    onFpsChanged: _onChangedFps,
+                  );
+                },
               ),
-              Positioned(
-                left: 24,
-                top: 24,
-                child: _FightTime(videoPlaybackWatcher: _videoPlaybackWatcher),
-              ),
-              Positioned(
-                right: 24,
-                top: 24,
-                child: FutureBuilder(
-                    future: _videoPlaybackWatcherCompleter.future,
-                    builder: (context, snapshot) {
-                      if (snapshot.connectionState != ConnectionState.done) {
-                        return Container();
-                      }
-                      return _FpsSelector(
-                          initialValue: _videoPlaybackWatcher.fps,
-                          onFpsChanged: _onChangedFps);
-                    }),
-              ),
-            ],
-          )),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -323,19 +402,19 @@ class _FightTime extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final fligthTimeDuration = fligthTime(
-        timeJumpStarts: _videoPlaybackWatcher.start,
-        timeJumpEnds: _videoPlaybackWatcher.end);
+      timeJumpStarts: _videoPlaybackWatcher.start,
+      timeJumpEnds: _videoPlaybackWatcher.end,
+    );
     final fligthTimeText =
-        '${(fligthTimeDuration.inMilliseconds / 1000).toStringAsFixed(3)} s';
+        '${(fligthTimeDuration.inMicroseconds / Duration.microsecondsPerSecond).toStringAsFixed(3)} s';
     final fligthHeightText =
         '${(flightHeight(fligthTime: fligthTimeDuration) * 100).toStringAsFixed(1)} cm';
 
     final textStyle = mainTextStyle.copyWith(
-        color: Theme.of(context)
-            .elevatedButtonTheme
-            .style!
-            .foregroundColor!
-            .resolve({}));
+      color: Theme.of(
+        context,
+      ).elevatedButtonTheme.style!.foregroundColor!.resolve({}),
+    );
 
     return Container(
       padding: const EdgeInsets.all(10),
@@ -354,15 +433,19 @@ class _FightTime extends StatelessWidget {
             children: [
               Row(
                 children: [
-                  TranslatableText(TextManager.instance.flightTime,
-                      style: textStyle),
+                  TranslatableText(
+                    TextManager.instance.flightTime,
+                    style: textStyle,
+                  ),
                   Text(': ', style: textStyle),
                 ],
               ),
               Row(
                 children: [
-                  TranslatableText(TextManager.instance.flightHeight,
-                      style: textStyle),
+                  TranslatableText(
+                    TextManager.instance.flightHeight,
+                    style: textStyle,
+                  ),
                   Text(': ', style: textStyle),
                 ],
               ),
@@ -405,11 +488,10 @@ class _FpsSelectorState extends State<_FpsSelector> {
   @override
   Widget build(BuildContext context) {
     final textStyle = mainTextStyle.copyWith(
-        color: Theme.of(context)
-            .elevatedButtonTheme
-            .style!
-            .foregroundColor!
-            .resolve({}));
+      color: Theme.of(
+        context,
+      ).elevatedButtonTheme.style!.foregroundColor!.resolve({}),
+    );
 
     final backgroundColor = Theme.of(context)
         .elevatedButtonTheme
@@ -433,7 +515,8 @@ class _FpsSelectorState extends State<_FpsSelector> {
               borderRadius: _isExpanded
                   ? BorderRadius.only(
                       topLeft: Radius.circular(12),
-                      topRight: Radius.circular(12))
+                      topRight: Radius.circular(12),
+                    )
                   : BorderRadius.circular(12),
             ),
             child: Row(
@@ -443,7 +526,7 @@ class _FpsSelectorState extends State<_FpsSelector> {
                 Icon(
                   _isExpanded ? Icons.expand_less : Icons.expand_more,
                   color: Colors.white,
-                )
+                ),
               ],
             ),
           ),
@@ -458,17 +541,21 @@ class _FpsSelectorState extends State<_FpsSelector> {
               decoration: BoxDecoration(
                 color: backgroundColor,
                 borderRadius: BorderRadius.only(
-                    bottomLeft: Radius.circular(12),
-                    bottomRight: Radius.circular(12)),
+                  bottomLeft: Radius.circular(12),
+                  bottomRight: Radius.circular(12),
+                ),
               ),
               child: Column(
                 children: FpsOptions.values
-                    .map((e) => GestureDetector(
+                    .map(
+                      (e) => GestureDetector(
                         onTap: () => _onFpsChanged(e),
                         child: Padding(
                           padding: const EdgeInsets.only(bottom: 8.0),
                           child: Text('FPS: ${e.toString()}', style: textStyle),
-                        )))
+                        ),
+                      ),
+                    )
                     .toList(),
               ),
             ),
@@ -485,13 +572,15 @@ class _VideoPlaybackSlider extends StatefulWidget {
     required this.onUpdateRanges,
     required this.onPlay,
     required this.onPause,
+    required this.onPrepareManualSeek,
   });
 
   final _VideoPlaybackWatcher watcher;
   final VideoPlayerController videoController;
-  final Function() onUpdateRanges;
-  final Function() onPlay;
-  final Function() onPause;
+  final VoidCallback onUpdateRanges;
+  final Future<void> Function() onPlay;
+  final Future<void> Function() onPause;
+  final Future<void> Function() onPrepareManualSeek;
 
   @override
   State<_VideoPlaybackSlider> createState() => _VideoPlaybackSliderState();
@@ -499,85 +588,260 @@ class _VideoPlaybackSlider extends StatefulWidget {
 
 class _VideoPlaybackSliderState extends State<_VideoPlaybackSlider> {
   late var _ranges = RangeValues(
-      widget.watcher.start.inMilliseconds /
-          widget.videoController.value.duration.inMilliseconds,
-      widget.watcher.end.inMilliseconds /
-          widget.videoController.value.duration.inMilliseconds);
+    normalizedVideoPosition(
+      position: widget.watcher.start,
+      duration: widget.videoController.value.duration,
+    ),
+    normalizedVideoPosition(
+      position: widget.watcher.end,
+      duration: widget.videoController.value.duration,
+    ),
+  );
   bool _focusOnFirst = true;
-  late var _playbackMarker = _ranges.start;
+  late double _fps = widget.watcher.fps.value;
+  late int _targetFrame = _frameForPosition(widget.watcher.start);
+  late final VideoSeekCoordinator _seekCoordinator;
+  bool _isScrubbing = false;
+  bool _wasPlayingBeforeScrub = false;
+  int _scrubSequence = 0;
+  Future<void>? _pauseBeforeSeek;
+  late bool _lastControllerIsPlaying = widget.videoController.value.isPlaying;
+  late bool _lastControllerIsCompleted =
+      widget.videoController.value.isCompleted;
+
+  int get _totalFrames => totalFramesForDuration(
+        duration: widget.videoController.value.duration,
+        fps: _fps,
+      );
+
+  Duration get _targetPosition => _positionForFrame(_targetFrame);
+
+  double get _normalizedTarget => normalizedVideoPosition(
+        position: _targetPosition,
+        duration: widget.videoController.value.duration,
+      );
+
+  void _reportSeekError(Object error, StackTrace stackTrace) {
+    FlutterError.reportError(
+      FlutterErrorDetails(
+        exception: error,
+        stack: stackTrace,
+        library: 'flight_time video replay',
+        context: ErrorDescription('while seeking during video scrubbing'),
+      ),
+    );
+  }
 
   @override
   void initState() {
-    widget.videoController.addListener(_updatePlaybackMarkerFromPlaying);
     super.initState();
+    _seekCoordinator = VideoSeekCoordinator(
+      seek: _seekVideo,
+      // video_player reports seek command completion before MediaCodec has
+      // rendered the requested frame. Samsung/Exynos decoders can otherwise
+      // spend all their time flushing stale work during a fast drag.
+      minimumInterval: Platform.isAndroid
+          ? const Duration(milliseconds: 150)
+          : const Duration(
+              microseconds: Duration.microsecondsPerSecond ~/ 60,
+            ),
+      // Continuous exact seeks repeatedly flush MediaCodec on Android. Wait
+      // for a short pause in the gesture, then preview only its latest frame.
+      debounceInterval: Platform.isAndroid
+          ? const Duration(milliseconds: 250)
+          : Duration.zero,
+      // A platform seek can occasionally never complete after repeated codec
+      // flushes. It must not permanently block the last-request-wins queue.
+      operationTimeout: Platform.isAndroid ? const Duration(seconds: 1) : null,
+      onError: _reportSeekError,
+    );
+    widget.videoController.addListener(_updateFromVideoController);
+  }
+
+  @override
+  void didUpdateWidget(_VideoPlaybackSlider oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(oldWidget.videoController, widget.videoController)) {
+      oldWidget.videoController.removeListener(_updateFromVideoController);
+      widget.videoController.addListener(_updateFromVideoController);
+      _seekCoordinator.invalidateLastCompletedTarget();
+      _lastControllerIsPlaying = widget.videoController.value.isPlaying;
+      _lastControllerIsCompleted = widget.videoController.value.isCompleted;
+    }
+    final updatedFps = widget.watcher.fps.value;
+    if (updatedFps != _fps) {
+      final currentPosition = _positionForFrame(_targetFrame);
+      _fps = updatedFps;
+      _targetFrame = _frameForPosition(currentPosition);
+    }
   }
 
   @override
   void dispose() {
-    widget.videoController.removeListener(_updatePlaybackMarkerFromPlaying);
+    _seekCoordinator.dispose();
+    widget.videoController.removeListener(_updateFromVideoController);
     super.dispose();
   }
 
-  double _getCurrentPlayingValue() {
+  int _frameForPosition(Duration position) {
+    return clampFrameIndex(durationToFrame(position, _fps), _totalFrames);
+  }
+
+  Duration _positionForFrame(int frame) {
+    if (!_fps.isFinite || _fps <= 0) return Duration.zero;
+
+    final position = frameToDuration(
+      clampFrameIndex(frame, _totalFrames),
+      _fps,
+    );
     final duration = widget.videoController.value.duration;
-    final position = widget.videoController.value.position;
-    return position.inMilliseconds / duration.inMilliseconds;
+    return position > duration ? duration : position;
   }
 
-  bool _isChanging = false;
-  Future<void> _setPlayingValue(double value, {bool force = false}) async {
-    if (value < 0 || value > 1) return;
-    _playbackMarker = value;
-    setState(() {});
-    _updateVideoFrame(value, force: force);
-  }
-
-  void _updatePlaybackMarkerFromPlaying() {
-    if (widget.videoController.value.isPlaying) {
-      _playbackMarker = _getCurrentPlayingValue();
-      setState(() {});
+  Future<void> _seekVideo(Duration target) async {
+    await widget.onPrepareManualSeek();
+    final pause = _pauseBeforeSeek;
+    if (pause != null) {
+      try {
+        await pause;
+      } finally {
+        if (identical(_pauseBeforeSeek, pause)) _pauseBeforeSeek = null;
+      }
     }
+    await widget.videoController.seekTo(target);
   }
 
-  Future<void> _onUpdateRanges(RangeValues values, {bool force = false}) async {
-    if (_ranges.start == values.start && _ranges.end == values.end) return;
+  void _updateFromVideoController() {
+    if (!mounted) return;
 
-    _focusOnFirst = _ranges.start != values.start;
-    _ranges = values;
-    widget.onUpdateRanges();
-    widget.watcher.start = Duration(
-        milliseconds: (values.start *
-                widget.videoController.value.duration.inMilliseconds)
-            .toInt());
-    widget.watcher.end = Duration(
-        milliseconds:
-            (values.end * widget.videoController.value.duration.inMilliseconds)
-                .toInt());
-    setState(() {});
+    final value = widget.videoController.value;
+    var needsRebuild = value.isPlaying != _lastControllerIsPlaying ||
+        value.isCompleted != _lastControllerIsCompleted;
+    _lastControllerIsPlaying = value.isPlaying;
+    _lastControllerIsCompleted = value.isCompleted;
 
-    _setPlayingValue(_focusOnFirst ? values.start : values.end, force: force);
-  }
+    if (value.isPlaying || value.isCompleted) {
+      _seekCoordinator.invalidateLastCompletedTarget();
+    }
 
-  Future<void> _updateVideoFrame(double value, {bool force = false}) async {
-    if (_isChanging) {
-      if (!force) return;
-
-      while (_isChanging) {
-        await Future.delayed(Duration(milliseconds: 10));
+    if (value.isPlaying && !_isScrubbing && !_seekCoordinator.isBusy) {
+      final playingFrame = _frameForPosition(
+        value.position,
+      );
+      if (playingFrame != _targetFrame) {
+        _targetFrame = playingFrame;
+        needsRebuild = true;
       }
     }
 
-    _isChanging = true;
-    final duration = widget.videoController.value.duration;
-    final position =
-        Duration(milliseconds: (value * duration.inMilliseconds).toInt());
-    await widget.videoController.seekTo(position);
+    if (needsRebuild) setState(() {});
+  }
 
-    // On Android it helps to wait a bit before setting the playback state
-    if (Platform.isAndroid) {
-      await Future.delayed(Duration(milliseconds: 125));
+  void _setTargetFrame(int requestedFrame, {bool requestSeek = true}) {
+    final nextFrame = clampFrameIndex(requestedFrame, _totalFrames);
+    final changed = nextFrame != _targetFrame;
+    _targetFrame = nextFrame;
+    if (changed && mounted) setState(() {});
+    if (requestSeek && changed) {
+      _seekCoordinator.request(
+        _targetPosition,
+        debounce: Platform.isAndroid && _isScrubbing,
+      );
     }
-    _isChanging = false;
+  }
+
+  void _onScrubStart() {
+    _scrubSequence++;
+    if (_isScrubbing) return;
+
+    _isScrubbing = true;
+    _wasPlayingBeforeScrub = widget.videoController.value.isPlaying;
+    _pauseBeforeSeek = _wasPlayingBeforeScrub ? widget.onPause() : null;
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _onScrubEnd(int frame) async {
+    final sequence = _scrubSequence;
+    _setTargetFrame(frame, requestSeek: false);
+    try {
+      await _seekCoordinator.requestFinal(_targetPosition);
+    } on Object catch (error, stackTrace) {
+      _reportSeekError(error, stackTrace);
+    }
+    if (!mounted || sequence != _scrubSequence) return;
+
+    _isScrubbing = false;
+    if (_wasPlayingBeforeScrub && _targetFrame < _totalFrames) {
+      unawaited(widget.onPlay());
+    }
+    setState(() {});
+  }
+
+  void _onUpdateRanges(RangeValues values) {
+    if (_ranges.start == values.start && _ranges.end == values.end) return;
+
+    _focusOnFirst = _ranges.start != values.start;
+    final duration = widget.videoController.value.duration;
+    final startFrame = _frameForPosition(
+      videoPositionFromNormalized(
+        normalizedPosition: values.start,
+        duration: duration,
+      ),
+    );
+    final endFrame = _frameForPosition(
+      videoPositionFromNormalized(
+        normalizedPosition: values.end,
+        duration: duration,
+      ),
+    );
+    widget.watcher.start = _positionForFrame(startFrame);
+    widget.watcher.end = _positionForFrame(endFrame);
+    _ranges = RangeValues(
+      normalizedVideoPosition(
+        position: widget.watcher.start,
+        duration: duration,
+      ),
+      normalizedVideoPosition(
+        position: widget.watcher.end,
+        duration: duration,
+      ),
+    );
+    widget.onUpdateRanges();
+    if (mounted) setState(() {});
+
+    _setTargetFrame(
+      _focusOnFirst ? startFrame : endFrame,
+      requestSeek: false,
+    );
+    _seekCoordinator.request(
+      _targetPosition,
+      debounce: Platform.isAndroid,
+    );
+  }
+
+  Future<void> _onRangeChangeEnd(RangeValues values) async {
+    _onUpdateRanges(values);
+    try {
+      await _seekCoordinator.requestFinal(_targetPosition);
+    } on Object catch (error, stackTrace) {
+      _reportSeekError(error, stackTrace);
+    }
+  }
+
+  void _setStartMarkerToCurrentFrame() {
+    if (_targetPosition >= widget.watcher.end) return;
+    widget.watcher.start = _targetPosition;
+    _ranges = RangeValues(_normalizedTarget, _ranges.end);
+    widget.onUpdateRanges();
+    setState(() {});
+  }
+
+  void _setEndMarkerToCurrentFrame() {
+    if (_targetPosition <= widget.watcher.start) return;
+    widget.watcher.end = _targetPosition;
+    _ranges = RangeValues(_ranges.start, _normalizedTarget);
+    widget.onUpdateRanges();
+    setState(() {});
   }
 
   @override
@@ -594,7 +858,7 @@ class _VideoPlaybackSliderState extends State<_VideoPlaybackSlider> {
               RangeSlider(
                 values: _ranges,
                 onChanged: _onUpdateRanges,
-                onChangeEnd: (value) => _onUpdateRanges(value, force: true),
+                onChangeEnd: _onRangeChangeEnd,
               ),
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 3 * padding),
@@ -605,15 +869,16 @@ class _VideoPlaybackSliderState extends State<_VideoPlaybackSlider> {
                       children: [
                         _MarkerButton(
                           symbol: '|',
-                          onTap: _playbackMarker < _ranges.end
-                              ? () => _onUpdateRanges(
-                                  RangeValues(_playbackMarker, _ranges.end))
+                          onTap: _targetPosition < widget.watcher.end
+                              ? _setStartMarkerToCurrentFrame
                               : null,
                         ),
                         SizedBox(width: padding),
                         _MarkerButton(
                           symbol: '<<',
-                          onTap: () => _setPlayingValue(_ranges.start),
+                          onTap: () => _setTargetFrame(
+                            _frameForPosition(widget.watcher.start),
+                          ),
                         ),
                       ],
                     ),
@@ -622,25 +887,18 @@ class _VideoPlaybackSliderState extends State<_VideoPlaybackSlider> {
                       children: [
                         _MarkerButton(
                           symbol: '<',
-                          onTap: () => _setPlayingValue(
-                              _playbackMarker - (1 / widget.watcher.fps.value)),
+                          onTap: () => _setTargetFrame(_targetFrame - 1),
                         ),
                         SizedBox(width: padding),
                         _PlayButton(
-                            isPlaying: widget.videoController.value.isPlaying,
-                            onPause: () {
-                              widget.onPause();
-                              setState(() {});
-                            },
-                            onPlay: () {
-                              widget.onPlay();
-                              setState(() {});
-                            }),
+                          isPlaying: widget.videoController.value.isPlaying,
+                          onPause: () => unawaited(widget.onPause()),
+                          onPlay: () => unawaited(widget.onPlay()),
+                        ),
                         SizedBox(width: padding),
                         _MarkerButton(
                           symbol: '>',
-                          onTap: () => _setPlayingValue(
-                              _playbackMarker + (1 / widget.watcher.fps.value)),
+                          onTap: () => _setTargetFrame(_targetFrame + 1),
                         ),
                       ],
                     ),
@@ -648,14 +906,15 @@ class _VideoPlaybackSliderState extends State<_VideoPlaybackSlider> {
                       children: [
                         _MarkerButton(
                           symbol: '>>',
-                          onTap: () => _setPlayingValue(_ranges.end),
+                          onTap: () => _setTargetFrame(
+                            _frameForPosition(widget.watcher.end),
+                          ),
                         ),
                         SizedBox(width: padding),
                         _MarkerButton(
                           symbol: '|',
-                          onTap: _playbackMarker > _ranges.start
-                              ? () => _onUpdateRanges(
-                                  RangeValues(_ranges.start, _playbackMarker))
+                          onTap: _targetPosition > widget.watcher.start
+                              ? _setEndMarkerToCurrentFrame
                               : null,
                         ),
                       ],
@@ -663,10 +922,15 @@ class _VideoPlaybackSliderState extends State<_VideoPlaybackSlider> {
                   ],
                 ),
               ),
-              Slider(
-                value: _playbackMarker,
-                onChanged: _setPlayingValue,
-                onChangeEnd: (value) => _setPlayingValue(value, force: true),
+              const SizedBox(height: 8),
+              VelocityJogScrubber(
+                fps: _fps,
+                duration: widget.videoController.value.duration,
+                frameIndex: _targetFrame,
+                reverseDirection: true,
+                onFrameChanged: _setTargetFrame,
+                onScrubStart: _onScrubStart,
+                onScrubEnd: _onScrubEnd,
               ),
             ],
           ),
@@ -680,27 +944,30 @@ const playbackButtonColor = Colors.white;
 const playbackDisabledButtonColor = Colors.white30;
 
 class _PlayButton extends StatelessWidget {
-  const _PlayButton(
-      {required this.isPlaying, required this.onPause, required this.onPlay});
+  const _PlayButton({
+    required this.isPlaying,
+    required this.onPause,
+    required this.onPlay,
+  });
 
   final bool isPlaying;
-  final Function() onPause;
-  final Function() onPlay;
+  final VoidCallback onPause;
+  final VoidCallback onPlay;
 
   @override
   Widget build(BuildContext context) {
     return GestureDetector(
       onTap: isPlaying ? onPause : onPlay,
       child: Container(
-          width: 45,
-          height: 45,
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: playbackButtonColor,
-          ),
-          child: isPlaying
-              ? const Icon(Icons.pause)
-              : const Icon(Icons.play_arrow)),
+        width: 45,
+        height: 45,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: playbackButtonColor,
+        ),
+        child:
+            isPlaying ? const Icon(Icons.pause) : const Icon(Icons.play_arrow),
+      ),
     );
   }
 }
@@ -716,16 +983,16 @@ class _MarkerButton extends StatelessWidget {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-          decoration: BoxDecoration(
-            shape: BoxShape.circle,
-            color: onTap == null
-                ? playbackDisabledButtonColor
-                : playbackButtonColor,
-          ),
-          child: Padding(
-            padding: const EdgeInsets.all(12.0),
-            child: Text(symbol),
-          )),
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color:
+              onTap == null ? playbackDisabledButtonColor : playbackButtonColor,
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(12.0),
+          child: Text(symbol),
+        ),
+      ),
     );
   }
 }
