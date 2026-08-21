@@ -651,11 +651,10 @@ class _VideoPlaybackSliderState extends State<_VideoPlaybackSlider> {
           : const Duration(
               microseconds: Duration.microsecondsPerSecond ~/ 60,
             ),
-      // This is a scheduling debounce rather than a delay after an Android
-      // seek. The final target is always sent exactly when the gesture ends.
-      debounceInterval: Platform.isAndroid
-          ? androidReplayContinuousScrubDebounce
-          : Duration.zero,
+      // A preview is dispatched during the gesture. The minimum interval and
+      // last-request-wins coordinator protect the decoder without hiding all
+      // intermediate images until the gesture ends.
+      debounceInterval: Duration.zero,
       // A platform seek can occasionally never complete after repeated codec
       // flushes. It must not permanently block the last-request-wins queue.
       operationTimeout: Platform.isAndroid ? androidReplaySeekTimeout : null,
@@ -755,7 +754,6 @@ class _VideoPlaybackSliderState extends State<_VideoPlaybackSlider> {
     if (requestSeek && changed) {
       _seekCoordinator.request(
         _targetPosition,
-        debounce: Platform.isAndroid && _isScrubbing,
       );
     }
   }
@@ -826,7 +824,6 @@ class _VideoPlaybackSliderState extends State<_VideoPlaybackSlider> {
     );
     _seekCoordinator.request(
       _targetPosition,
-      debounce: Platform.isAndroid,
     );
   }
 

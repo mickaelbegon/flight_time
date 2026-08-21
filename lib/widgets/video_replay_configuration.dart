@@ -21,11 +21,6 @@ const androidReplayMaximumSeeksPerSecond = int.fromEnvironment(
   defaultValue: 60,
 );
 
-/// Lets a continuous gesture settle briefly before a preview seek is sent.
-///
-/// This is a seek-scheduling policy, not a delay inserted after a seek.
-const androidReplayContinuousScrubDebounce = Duration(milliseconds: 50);
-
 const androidReplaySeekTimeout = Duration(seconds: 1);
 
 Duration androidReplaySeekMinimumInterval() {

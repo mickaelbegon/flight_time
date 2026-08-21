@@ -30,7 +30,7 @@ The current Android default is intentionally explicit:
 ```text
 back buffer: 5,000 ms
 preview seek limit: 60 seeks/s
-continuous-scrub debounce: 50 ms
+continuous preview: enabled (no gesture debounce)
 final seek: exact logical target, always sent on release
 ```
 
@@ -91,9 +91,10 @@ The transient position returned by ExoPlayer is never used to redefine the
 take-off or landing frame. A slow or dropped preview image during a rapid swipe
 therefore cannot alter the scientific calculation.
 
-The debounce and throttle are scheduling controls: no fixed delay is inserted
-after `seekTo()` to make Android "catch up". A timeout releases the coordinator
-if a platform seek never resolves. There is never a queue of obsolete seeks.
+The throttle is a scheduling control: no fixed delay is inserted after
+`seekTo()` to make Android "catch up", and the active jog gesture is not
+debounced. A timeout releases the coordinator if a platform seek never
+resolves. There is never a queue of obsolete seeks.
 
 ## Debug metrics and manual protocol
 
