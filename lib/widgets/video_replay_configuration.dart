@@ -15,10 +15,12 @@ const androidReplayBackBufferDurationMs = int.fromEnvironment(
 /// Maximum number of preview seeks sent to the Android player per second.
 ///
 /// Pass `--dart-define=ANDROID_REPLAY_MAX_SEEKS_PER_SECOND=0` to benchmark
-/// last-request-wins without an explicit rate limit, or set it to 30 or 60.
+/// last-request-wins without an explicit rate limit, or set it to 30 or 60 for
+/// explicit experiments. Eight seeks per second is the safe Pixel baseline:
+/// `seekTo` completion does not wait for a decoded frame.
 const androidReplayMaximumSeeksPerSecond = int.fromEnvironment(
   'ANDROID_REPLAY_MAX_SEEKS_PER_SECOND',
-  defaultValue: 60,
+  defaultValue: 8,
 );
 
 const androidReplaySeekTimeout = Duration(seconds: 1);

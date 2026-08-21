@@ -29,7 +29,7 @@ The current Android default is intentionally explicit:
 
 ```text
 back buffer: 5,000 ms
-preview seek limit: 60 seeks/s
+preview seek limit: 8 seeks/s (125 ms, safe Pixel baseline)
 continuous preview: enabled (no gesture debounce)
 final seek: exact logical target, always sent on release
 ```
@@ -49,12 +49,17 @@ flutter run -d <pixel-id> \
   --dart-define=ANDROID_REPLAY_BACK_BUFFER_MS=5000 \
   --dart-define=ANDROID_REPLAY_MAX_SEEKS_PER_SECOND=0
 
+# D8 (default): back buffer + last-request-wins + safe preview cap
+flutter run -d <pixel-id> \
+  --dart-define=ANDROID_REPLAY_BACK_BUFFER_MS=5000 \
+  --dart-define=ANDROID_REPLAY_MAX_SEEKS_PER_SECOND=8
+
 # D30: back buffer + last-request-wins + 30 Hz preview cap
 flutter run -d <pixel-id> \
   --dart-define=ANDROID_REPLAY_BACK_BUFFER_MS=5000 \
   --dart-define=ANDROID_REPLAY_MAX_SEEKS_PER_SECOND=30
 
-# D60 (default): back buffer + last-request-wins + 60 Hz preview cap
+# D60: back buffer + last-request-wins + 60 Hz preview cap
 flutter run -d <pixel-id> \
   --dart-define=ANDROID_REPLAY_BACK_BUFFER_MS=5000 \
   --dart-define=ANDROID_REPLAY_MAX_SEEKS_PER_SECOND=60
@@ -179,8 +184,9 @@ effect observed: unit-tested; only one active seek and one replaceable pending
 target remain.
 
 60 Hz throttle:
-effect observed: unit-tested; configurable to unlimited, 30 Hz or 60 Hz;
-real-device metrics pending.
+effect observed: on the Pixel 8a it displays a few preview frames, then the
+hardware decoder stops updating. The default is therefore 8 Hz; 30/60 remain
+explicit benchmark configurations.
 
 scrubbing mode Media3:
 available: yes
@@ -190,10 +196,10 @@ activated currently: no
 
 Recommendation: **C/D must be benchmarked before declaring an upgrade
 sufficient**. The upgrade enables an important back-buffer control, but cannot
-by itself solve high-frequency decoder flushes. If the measured D30/D60 runs
-remain unstable on the Pixel 8a, choose **D. a small native
-`video_player_android` extension is recommended**, rather than sending more
-Dart `seekTo()` calls.
+by itself solve high-frequency decoder flushes. The first Pixel 8a D60 run was
+unstable, so the default stays at 8 Hz. If the measured D30/D60 runs remain
+unstable, choose **D. a small native `video_player_android` extension is
+recommended**, rather than sending more Dart `seekTo()` calls.
 
 ## References
 
