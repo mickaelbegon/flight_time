@@ -120,10 +120,10 @@ frame agree. Compare the completed/requested ratio and seek-duration percentiles
 alongside visual responsiveness; a high request rate alone is not a win if it
 causes stale MediaCodec callbacks or a frozen preview.
 
-No device metric is claimed yet for this branch: the debug APK built, but the
-available Mac volume space became insufficient before the instrumented app
-could be launched on the connected Pixel 8a. The protocol above makes the
-comparison reproducible once space is freed.
+No device metric is claimed yet for this branch: the debug APK was installed
+and launched on the connected Pixel 8a, but the manual A-D replay gestures
+could not be exercised from this environment. The protocol above makes the
+comparison reproducible on the same device and videos.
 
 ## Media3 capability status
 
