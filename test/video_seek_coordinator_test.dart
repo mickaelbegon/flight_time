@@ -27,6 +27,7 @@ void main() {
     expect(targets, [const Duration(milliseconds: 10)]);
     expect(coordinator.pendingTarget, const Duration(milliseconds: 30));
     expect(coordinator.maxPendingSeekCount, 1);
+    expect(coordinator.coalescedSeekCount, 1);
 
     completions.first.complete();
     await flushMicrotasks();
@@ -159,5 +160,34 @@ void main() {
 
     expect(targets, [const Duration(milliseconds: 30)]);
     expect(coordinator.isBusy, isFalse);
+  });
+
+  test('throttling spaces preview seek requests without losing the target',
+      () async {
+    final targets = <Duration>[];
+    final stopwatch = Stopwatch()..start();
+    final dispatchTimes = <Duration>[];
+    final coordinator = VideoSeekCoordinator(
+      minimumInterval: const Duration(milliseconds: 20),
+      seek: (target) async {
+        targets.add(target);
+        dispatchTimes.add(stopwatch.elapsed);
+      },
+    );
+    addTearDown(coordinator.dispose);
+
+    coordinator.request(const Duration(milliseconds: 10));
+    await flushMicrotasks();
+    coordinator.request(const Duration(milliseconds: 30));
+    await Future<void>.delayed(const Duration(milliseconds: 60));
+
+    expect(targets, [
+      const Duration(milliseconds: 10),
+      const Duration(milliseconds: 30),
+    ]);
+    expect(
+      dispatchTimes.last - dispatchTimes.first,
+      greaterThanOrEqualTo(const Duration(milliseconds: 15)),
+    );
   });
 }

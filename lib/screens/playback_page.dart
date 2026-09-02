@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flight_time/models/video_meta_data.dart';
 import 'package:flight_time/widgets/scaffold_video_playback.dart';
+import 'package:flight_time/widgets/video_replay_configuration.dart';
 import 'package:flight_time/widgets/waiting_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
@@ -63,7 +64,10 @@ class _PlaybackPageState extends State<PlaybackPage> {
   ) async {
     VideoPlayerController? replacement;
     try {
-      replacement = VideoPlayerController.file(File(_filePath!));
+      replacement = VideoPlayerController.file(
+        File(_filePath!),
+        videoPlayerOptions: replayVideoPlayerOptions(),
+      );
       await replacement.initialize();
 
       final duration = replacement.value.duration;
@@ -116,7 +120,10 @@ class _PlaybackPageState extends State<PlaybackPage> {
             as String?
         : _metaData!.videoPath;
 
-    final controller = VideoPlayerController.file(File(_filePath!));
+    final controller = VideoPlayerController.file(
+      File(_filePath!),
+      videoPlayerOptions: replayVideoPlayerOptions(),
+    );
     _videoPlayerController = controller;
     await controller.initialize();
     if (!mounted) {

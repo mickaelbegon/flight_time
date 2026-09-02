@@ -9,8 +9,11 @@ import 'package:flight_time/widgets/helpers.dart';
 import 'package:flight_time/widgets/save_trial_dialog.dart';
 import 'package:flight_time/widgets/translatable_text.dart';
 import 'package:flight_time/widgets/video_playback_timing.dart';
+import 'package:flight_time/widgets/video_replay_configuration.dart';
 import 'package:flight_time/widgets/video_seek_coordinator.dart';
+import 'package:flight_time/widgets/video_seek_metrics.dart';
 import 'package:flight_time/widgets/velocity_jog_scrubber.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:video_player/video_player.dart';
@@ -632,28 +635,31 @@ class _VideoPlaybackSliderState extends State<_VideoPlaybackSlider> {
     );
   }
 
+  void _reportScrubMetrics(VideoSeekMetricsSnapshot metrics) {
+    debugPrint(metrics.formatForDebugLog());
+  }
+
   @override
   void initState() {
     super.initState();
     _seekCoordinator = VideoSeekCoordinator(
       seek: _seekVideo,
-      // video_player reports seek command completion before MediaCodec has
-      // rendered the requested frame. Samsung/Exynos decoders can otherwise
-      // spend all their time flushing stale work during a fast drag.
+      // Logical frames can change freely. This bounds only the commands sent
+      // to the decoder, which cannot display every intermediate target.
       minimumInterval: Platform.isAndroid
-          ? const Duration(milliseconds: 150)
+          ? androidReplaySeekMinimumInterval()
           : const Duration(
               microseconds: Duration.microsecondsPerSecond ~/ 60,
             ),
-      // Continuous exact seeks repeatedly flush MediaCodec on Android. Wait
-      // for a short pause in the gesture, then preview only its latest frame.
-      debounceInterval: Platform.isAndroid
-          ? const Duration(milliseconds: 250)
-          : Duration.zero,
+      // A preview is dispatched during the gesture. The minimum interval and
+      // last-request-wins coordinator protect the decoder without hiding all
+      // intermediate images until the gesture ends.
+      debounceInterval: Duration.zero,
       // A platform seek can occasionally never complete after repeated codec
       // flushes. It must not permanently block the last-request-wins queue.
-      operationTimeout: Platform.isAndroid ? const Duration(seconds: 1) : null,
+      operationTimeout: Platform.isAndroid ? androidReplaySeekTimeout : null,
       onError: _reportSeekError,
+      onMetrics: kDebugMode ? _reportScrubMetrics : null,
     );
     widget.videoController.addListener(_updateFromVideoController);
   }
@@ -741,11 +747,13 @@ class _VideoPlaybackSliderState extends State<_VideoPlaybackSlider> {
     final nextFrame = clampFrameIndex(requestedFrame, _totalFrames);
     final changed = nextFrame != _targetFrame;
     _targetFrame = nextFrame;
-    if (changed && mounted) setState(() {});
+    if (changed) {
+      _seekCoordinator.recordTargetFrameChange();
+      if (mounted) setState(() {});
+    }
     if (requestSeek && changed) {
       _seekCoordinator.request(
         _targetPosition,
-        debounce: Platform.isAndroid && _isScrubbing,
       );
     }
   }
@@ -780,6 +788,7 @@ class _VideoPlaybackSliderState extends State<_VideoPlaybackSlider> {
   void _onUpdateRanges(RangeValues values) {
     if (_ranges.start == values.start && _ranges.end == values.end) return;
 
+    _seekCoordinator.recordGestureUpdate();
     _focusOnFirst = _ranges.start != values.start;
     final duration = widget.videoController.value.duration;
     final startFrame = _frameForPosition(
@@ -815,7 +824,6 @@ class _VideoPlaybackSliderState extends State<_VideoPlaybackSlider> {
     );
     _seekCoordinator.request(
       _targetPosition,
-      debounce: Platform.isAndroid,
     );
   }
 
@@ -826,6 +834,11 @@ class _VideoPlaybackSliderState extends State<_VideoPlaybackSlider> {
     } on Object catch (error, stackTrace) {
       _reportSeekError(error, stackTrace);
     }
+  }
+
+  void _onJogFrameChanged(int frame) {
+    _seekCoordinator.recordGestureUpdate();
+    _setTargetFrame(frame);
   }
 
   void _setStartMarkerToCurrentFrame() {
@@ -928,7 +941,7 @@ class _VideoPlaybackSliderState extends State<_VideoPlaybackSlider> {
                 duration: widget.videoController.value.duration,
                 frameIndex: _targetFrame,
                 reverseDirection: true,
-                onFrameChanged: _setTargetFrame,
+                onFrameChanged: _onJogFrameChanged,
                 onScrubStart: _onScrubStart,
                 onScrubEnd: _onScrubEnd,
               ),

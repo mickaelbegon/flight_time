@@ -1,9 +1,14 @@
 import 'dart:async';
 
+import 'package:flight_time/widgets/video_seek_metrics.dart';
+
 typedef VideoSeekCallback = Future<void> Function(Duration target);
 typedef VideoSeekErrorCallback = void Function(
   Object error,
   StackTrace stackTrace,
+);
+typedef VideoSeekMetricsCallback = void Function(
+  VideoSeekMetricsSnapshot metrics,
 );
 
 class VideoSeekCoordinator {
@@ -13,18 +18,30 @@ class VideoSeekCoordinator {
     this.debounceInterval = Duration.zero,
     this.operationTimeout,
     VideoSeekErrorCallback? onError,
+    VideoSeekMetricsCallback? onMetrics,
+    this.metricsWindow = const Duration(seconds: 1),
   })  : _seek = seek,
         _onError = onError,
+        _onMetrics = onMetrics,
+        _metrics = onMetrics == null ? null : VideoSeekMetrics(),
         _clock = Stopwatch()..start(),
         assert(debounceInterval >= Duration.zero),
-        assert(operationTimeout == null || operationTimeout > Duration.zero);
+        assert(operationTimeout == null || operationTimeout > Duration.zero),
+        assert(metricsWindow > Duration.zero) {
+    if (_metrics != null) {
+      _metricsTimer = Timer.periodic(metricsWindow, (_) => _emitMetrics());
+    }
+  }
 
   final VideoSeekCallback _seek;
   final VideoSeekErrorCallback? _onError;
+  final VideoSeekMetricsCallback? _onMetrics;
   final Duration minimumInterval;
   final Duration debounceInterval;
   final Duration? operationTimeout;
+  final Duration metricsWindow;
   final Stopwatch _clock;
+  final VideoSeekMetrics? _metrics;
 
   Duration? _pendingTarget;
   Duration? _lastDispatchTime;
@@ -33,12 +50,14 @@ class VideoSeekCoordinator {
   Future<void>? _finalSeek;
   Timer? _throttleTimer;
   Timer? _debounceTimer;
+  Timer? _metricsTimer;
   bool _disposed = false;
   bool _finalizing = false;
 
   int requestedSeekCount = 0;
   int dispatchedSeekCount = 0;
   int completedSeekCount = 0;
+  int coalescedSeekCount = 0;
   int maxPendingSeekCount = 0;
 
   bool get isBusy =>
@@ -54,10 +73,19 @@ class VideoSeekCoordinator {
     _lastCompletedTarget = null;
   }
 
+  void recordGestureUpdate() {
+    _metrics?.recordGestureUpdate();
+  }
+
+  void recordTargetFrameChange() {
+    _metrics?.recordTargetFrameChange();
+  }
+
   void request(Duration target, {bool debounce = false}) {
     if (_disposed) return;
 
     requestedSeekCount++;
+    if (_pendingTarget != null) _recordCoalescedRequest();
     _pendingTarget = target;
     maxPendingSeekCount = 1;
 
@@ -99,6 +127,7 @@ class VideoSeekCoordinator {
 
   Future<void> _performFinalSeek(Duration target) async {
     requestedSeekCount++;
+    if (_pendingTarget != null) _recordCoalescedRequest();
     _finalizing = true;
     _pendingTarget = null;
     _throttleTimer?.cancel();
@@ -124,9 +153,12 @@ class VideoSeekCoordinator {
 
       _lastDispatchTime = _clock.elapsed;
       dispatchedSeekCount++;
+      _metrics?.recordSeekRequest();
+      final startedAt = _clock.elapsed;
       await _seekWithTimeout(target);
       _lastCompletedTarget = target;
       completedSeekCount++;
+      _metrics?.recordSeekCompleted(_clock.elapsed - startedAt);
     } finally {
       _finalizing = false;
       _schedulePendingSeek();
@@ -187,6 +219,8 @@ class VideoSeekCoordinator {
     _pendingTarget = null;
     _lastDispatchTime = _clock.elapsed;
     dispatchedSeekCount++;
+    _metrics?.recordSeekRequest();
+    final startedAt = _clock.elapsed;
 
     late final Future<void> operation;
     try {
@@ -200,10 +234,20 @@ class VideoSeekCoordinator {
 
     _activeSeek = operation;
     operation.then<void>(
-      (_) => _completeSeek(operation, target: target, succeeded: true),
+      (_) => _completeSeek(
+        operation,
+        target: target,
+        succeeded: true,
+        duration: _clock.elapsed - startedAt,
+      ),
       onError: (Object error, StackTrace stackTrace) {
         _onError?.call(error, stackTrace);
-        _completeSeek(operation, target: target, succeeded: false);
+        _completeSeek(
+          operation,
+          target: target,
+          succeeded: false,
+          duration: _clock.elapsed - startedAt,
+        );
       },
     );
   }
@@ -212,11 +256,15 @@ class VideoSeekCoordinator {
     Future<void> operation, {
     required Duration target,
     required bool succeeded,
+    required Duration duration,
   }) {
     if (!identical(_activeSeek, operation)) return;
 
     _activeSeek = null;
-    if (succeeded) _lastCompletedTarget = target;
+    if (succeeded) {
+      _lastCompletedTarget = target;
+      _metrics?.recordSeekCompleted(duration);
+    }
     completedSeekCount++;
     _schedulePendingSeek();
   }
@@ -228,6 +276,21 @@ class VideoSeekCoordinator {
     _throttleTimer = null;
     _debounceTimer?.cancel();
     _debounceTimer = null;
+    _metricsTimer?.cancel();
+    _metricsTimer = null;
     _clock.stop();
+  }
+
+  void _emitMetrics() {
+    final metrics = _metrics;
+    if (_disposed || metrics == null) return;
+
+    final snapshot = metrics.takeSnapshot();
+    if (!snapshot.isEmpty) _onMetrics?.call(snapshot);
+  }
+
+  void _recordCoalescedRequest() {
+    coalescedSeekCount++;
+    _metrics?.recordCoalescedRequest();
   }
 }
