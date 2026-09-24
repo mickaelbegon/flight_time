@@ -25,6 +25,8 @@ plutôt que de relire l’ensemble du dépôt.
 - `test/video_seek_coordinator_test.dart`,
   `test/video_playback_timing_test.dart` et
   `test/velocity_jog_scrubber*_test.dart` : tests ciblés du replay.
+- `.github/workflows/android.yml` : CI Android, APK debug téléchargeable et
+  publication d’un APK release lors des tags `v*`.
 
 ## Capture Android haute fréquence
 
@@ -71,6 +73,10 @@ plugin Android après une mise à jour Git, exécuter depuis `android/` :
 La compilation actuelle signale encore une mise à jour Kotlin à prévoir et des
 dépréciations CamerAwesome ; ne pas les confondre avec une régression du flux
 haute vitesse.
+
+Consulter `docs/github_actions_android.md` avant de modifier le workflow ou la
+signature CI. Les secrets de signature restent exclusivement dans GitHub
+Actions : ne jamais ajouter de keystore ni de `key.properties` au dépôt.
 
 ## Git
 
