@@ -45,8 +45,8 @@ packages:
     dependency: "direct main"
     description:
       path: "."
-      ref: "28f938f1e7e24226ef2e3d27e2e35840351d81af"
-      resolved-ref: "28f938f1e7e24226ef2e3d27e2e35840351d81af"
+      ref: "77e3e5d"
+      resolved-ref: "77e3e5d39c676118d8d0803b2842d03130d93f6a"
       url: "https://github.com/mickaelbegon/CamerAwesome.git"
     source: git
     version: "2.5.0"

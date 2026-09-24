@@ -32,7 +32,7 @@ dependency_overrides:
   camerawesome:
     git:
       url: https://github.com/mickaelbegon/CamerAwesome.git
-      ref: 28f938f1e7e24226ef2e3d27e2e35840351d81af
+      ref: 77e3e5d
 
 flutter:
   uses-material-design: true
