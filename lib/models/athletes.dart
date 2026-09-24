@@ -111,6 +111,9 @@ class Athletes {
     if (!isReady) throw StateError('Database is not ready');
 
     final athlete = metaData.athlete;
+    if (!_athletes.any((knownAthlete) => knownAthlete.name == athlete.name)) {
+      throw StateError('Athlete does not exist');
+    }
 
     // Update the metadata file
     await metaData.writeToDisk();

@@ -13,9 +13,11 @@ import 'package:flight_time/models/video_meta_data.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path_provider_linux/path_provider_linux.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 Future<Athletes> getDatabase() async {
   WidgetsFlutterBinding.ensureInitialized();
+  SharedPreferences.setMockInitialValues({});
   if (!Platform.isLinux) {
     throw UnsupportedError('This test is for Linux only');
   }
@@ -132,18 +134,29 @@ void main() {
     await athletes.addAthlete('John Doe');
     await athletes
         .addVideo(await dummyVideoMetaData('John Doe', trialName: 'my_video'));
-    expect(
-        () async => athletes.addVideo(
-            await dummyVideoMetaData('John Doe', trialName: 'my_video')),
-        throwsStateError);
+    await athletes
+        .addVideo(await dummyVideoMetaData('John Doe', trialName: 'my_video'));
+
+    final athlete = athletes.athleteFromName('John Doe');
+    expect(athlete.videoMetaDataPaths, ['my_folder/my_video.meta']);
   });
 
   test('Add a video to a non-existing athlete', () async {
     final athletes = await getDatabase();
+    final metaData = VideoMetaData(
+      athlete: Athlete(name: 'John Doe'),
+      trialName: 'my_video',
+      baseFolder: Directory('my_folder'),
+      duration: Duration.zero,
+      creationDate: DateTime(0),
+      lastModified: DateTime(0),
+      timeJumpStarts: Duration.zero,
+      timeJumpEnds: Duration.zero,
+    );
     expect(
-        () async => athletes.addVideo(
-            await dummyVideoMetaData('John Doe', trialName: 'my_video')),
-        throwsStateError);
+      () => athletes.addVideo(metaData),
+      throwsStateError,
+    );
   });
 
   test('Try to modify the video path without using Athletes interface',
@@ -167,6 +180,8 @@ void main() {
         .addVideo(await dummyVideoMetaData('John Doe', trialName: 'my_video'));
     await athletes
         .addVideo(await dummyVideoMetaData('John Doe', trialName: 'my_video2'));
+
+    await File('my_folder/my_video.mp4').create(recursive: true);
 
     await athletes.removeVideo(
         await dummyVideoMetaData('John Doe', trialName: 'my_video'));
