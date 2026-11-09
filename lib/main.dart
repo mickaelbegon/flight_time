@@ -2,6 +2,7 @@ import 'package:flight_time/models/athletes.dart';
 import 'package:flight_time/screens/about_page.dart';
 import 'package:flight_time/screens/athletes_navigation_page.dart';
 import 'package:flight_time/screens/camera_page.dart';
+import 'package:flight_time/screens/nitro_camera_experiment_page.dart';
 import 'package:flight_time/screens/playback_page.dart';
 import 'package:flight_time/widgets/helpers.dart';
 import 'package:flutter/material.dart';
@@ -40,6 +41,8 @@ class MyApp extends StatelessWidget {
       initialRoute: AthletesNavigationPage.routeName,
       routes: {
         CameraPage.routeName: (context) => const CameraPage(),
+        NitroCameraExperimentPage.routeName: (context) =>
+            const NitroCameraExperimentPage(),
         PlaybackPage.routeName: (context) => const PlaybackPage(),
         AthletesNavigationPage.routeName: (context) =>
             const AthletesNavigationPage(),

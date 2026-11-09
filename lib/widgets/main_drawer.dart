@@ -2,6 +2,7 @@ import 'package:flight_time/models/text_manager.dart';
 import 'package:flight_time/screens/about_page.dart';
 import 'package:flight_time/screens/athletes_navigation_page.dart';
 import 'package:flight_time/screens/camera_page.dart';
+import 'package:flight_time/screens/nitro_camera_experiment_page.dart';
 import 'package:flight_time/widgets/helpers.dart';
 import 'package:flight_time/widgets/switch_language.dart';
 import 'package:flight_time/widgets/translatable_text.dart';
@@ -49,6 +50,16 @@ class MainDrawer extends StatelessWidget {
                 return;
               }
               Navigator.pushReplacementNamed(context, CameraPage.routeName);
+            },
+          ),
+          Divider(),
+          ListTile(
+            leading: const Icon(Icons.science_outlined),
+            title: TranslatableText(TextManager.instance.experimentalCamera,
+                style: subtitleStyle),
+            onTap: () {
+              Navigator.pushReplacementNamed(
+                  context, NitroCameraExperimentPage.routeName);
             },
           ),
           Divider(),

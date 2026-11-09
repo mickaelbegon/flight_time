@@ -11,6 +11,12 @@ dependencies:
   flutter:
     sdk: flutter
   camerawesome: ^2.1.0
+  # Experimental Android high-speed capture evaluation. The fork adds exact
+  # Camera2 capability discovery and post-capture timestamp diagnostics.
+  nitro_camera:
+    git:
+      url: https://github.com/mickaelbegon/nitro_camera.git
+      ref: '4ece5e3'
   video_player: ^2.9.2
   cupertino_icons: ^1.0.8
   sembast: ^3.7.5

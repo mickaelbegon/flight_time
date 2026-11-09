@@ -51,6 +51,9 @@ class TextManager {
   TranslatableString get playback =>
       TranslatableString(en: 'Playback', fr: 'Lecture');
 
+  TranslatableString get experimentalCamera => TranslatableString(
+      en: 'Nitro Camera (experimental)', fr: 'Nitro Camera (expérimental)');
+
   // The Recording related texts
   TranslatableString get recordingVideo =>
       TranslatableString(en: 'Video recording', fr: 'Enregistrement vidéo');
