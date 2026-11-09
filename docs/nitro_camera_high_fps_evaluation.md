@@ -75,8 +75,18 @@ signal indicatif uniquement : une scène immobile peut légitimement en contenir
 
 | Téléphone | Android | Mode annoncé | Mode négocié | FPS mesuré | Jitter | Frames manquantes | Résultat |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| Pixel 8a | à compléter | à compléter | à compléter | à compléter | à compléter | à compléter | à compléter |
+| Pixel 8a | Android 17 (API 37) | 1920×1080 @ 240 fps | 1920×1080 @ 240 fps | 240,04 fps | 17,9 µs | 0 | Premier essai validé |
 | Pixel 7 | à compléter | à compléter | à compléter | à compléter | à compléter | à compléter | à compléter |
+
+### Premier essai Pixel 8a — 2026-11-09
+
+- intervalle capteur médian : **4 167 µs**, cohérent avec `1 / 240 s` ;
+- fichier : H.264 1920×1080, 520 images, timeline MP4 de 17,3302 s à 30 fps ;
+- durée physique déduite : 2,167 s ; la timeline de lecture est donc bien
+  ralentie d’un facteur huit ;
+- analyse offline : aucune paire d’images décodées strictement identique. Ce
+  dernier indicateur est complémentaire aux timestamps et ne constitue pas à
+  lui seul une preuve d’absence de duplication.
 
 ## Critère de décision
 
